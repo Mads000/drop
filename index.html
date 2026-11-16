@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0e0f13">
+<title>Drop</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<style>
+  :root{--bg:#0e0f13;--card:#181a21;--line:#2a2d38;--txt:#eceef3;--mut:#8b90a0;--acc:#4f8cff;--ok:#3ecf8e;--err:#ff6b6b}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--txt);
+       padding:env(safe-area-inset-top) 16px 40px;min-height:100vh}
+  .wrap{max-width:560px;margin:0 auto}
+  h1{font-size:28px;margin:24px 0 4px;letter-spacing:-.5px}
+  h1 span{color:var(--acc)}
+  .sub{color:var(--mut);margin:0 0 20px;font-size:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;margin-bottom:14px}
+  .row{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+  .code{font-size:34px;font-weight:700;letter-spacing:6px;font-family:ui-monospace,Consolas,monospace}
+  .lbl{font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--mut);margin-bottom:6px}
+  #qr{background:#fff;padding:8px;border-radius:10px;line-height:0}
+  #qr img,#qr canvas{width:120px;height:120px}
+  input[type=text]{flex:1;min-width:0;background:#0e0f13;border:1px solid var(--line);color:var(--txt);border-radius:10px;
+       padding:12px;font-size:18px;letter-spacing:3px;text-transform:uppercase;font-family:ui-monospace,Consolas,monospace}
+  button,.btn{background:var(--acc);color:#fff;border:0;border-radius:10px;padding:12px 16px;font-size:15px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--txt)}
+  button:disabled{opacity:.4;cursor:default}
+  .status{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--mut)}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--mut)}
+  .dot.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  .dot.err{background:var(--err)}
+  #drop{border:2px dashed var(--line);border-radius:14px;padding:30px 16px;text-align:center;cursor:pointer;transition:.15s}
+  #drop.hover{border-color:var(--acc);background:#4f8cff12}
+  #drop.off{opacity:.4;pointer-events:none}
+  #drop b{display:block;font-size:17px;margin-bottom:4px}
+  #drop small{color:var(--mut)}
+  .item{display:flex;gap:12px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+  .item:first-child{border-top:0}
+  .thumb{width:52px;height:52px;border-radius:8px;background:#0e0f13;object-fit:cover;flex:none;display:flex;align-items:center;justify-content:center;font-size:22px}
+  .meta{flex:1;min-width:0}
+  .name{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .info{font-size:12px;color:var(--mut);margin-top:2px}
+  .bar{height:4px;background:var(--line);border-radius:4px;margin-top:6px;overflow:hidden}
+  .bar i{display:block;height:100%;width:0;background:var(--acc);transition:width .1s}
+  .item button{padding:8px 12px;font-size:13px}
+  .hide{display:none!important}
+  .empty{color:var(--mut);font-size:14px;text-align:center;padding:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1><span>●</span> Drop</h1>
+  <p class="sub">Dateien direkt zwischen deinen Geräten schicken, in Originalqualität.</p>
+
+  <!-- Verbinden -->
+  <div class="card" id="pairCard">
+    <div class="row">
+      <div id="qr"></div>
+      <div>
+        <div class="lbl">Dein Code</div>
+        <div class="code" id="myCode">······</div>
+        <div class="info">Mit dem iPhone den QR-Code scannen<br>oder den Code auf dem anderen Gerät eingeben.</div>
+      </div>
+    </div>
+    <div class="row" style="margin-top:16px">
+      <input type="text" id="codeIn" maxlength="6" placeholder="CODE" autocomplete="off" autocapitalize="characters">
+      <button id="connectBtn">Verbinden</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <div class="status"><span class="dot" id="dot"></span><span id="statusTxt">Starte …</span></div>
+      <button class="ghost hide" id="disconnectBtn">Trennen</button>
+    </div>
+  </div>
+
+  <!-- Senden -->
+  <div class="card">
+    <div id="drop" class="off">
+      <b>Dateien senden</b>
+      <small>Tippen zum Auswählen · am PC auch per Drag & Drop</small>
+    </div>
+    <input type="file" id="fileIn" multiple class="hide">
+  </div>
+
+  <!-- Liste -->
+  <div class="card">
+    <div class="lbl">Übertragungen</div>
+    <div id="list"><div class="empty" id="empty">Noch nichts übertragen.</div></div>
+  </div>
+</div>
+
+<script>
+const PREFIX = 'mads-drop-v1-';
+const $ = s => document.querySelector(s);
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+let peer, conn, myCode;
+let sendQueue = [], sending = false;
+let incoming = null;          // aktuell empfangene Datei
+let msgChain = Promise.resolve();
+
+/* ---------- Hilfsfunktionen ---------- */
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function fmt(b){ if(b<1024) return b+' B'; const u=['KB','MB','GB']; let i=-1; do{b/=1024;i++}while(b>=1024&&i<2); return b.toFixed(b<10?1:0)+' '+u[i]; }
+function newCode(){ const c='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s=''; for(let i=0;i<6;i++) s+=c[Math.floor(Math.random()*c.length)]; return s; }
+function deviceName(){ const u=navigator.userAgent; if(/iPhone/.test(u))return'iPhone'; if(isIOS)return'iPad'; if(/Android/.test(u))return'Android'; if(/Windows/.test(u))return'Windows-PC'; if(/Mac/.test(u))return'Mac'; return'Gerät'; }
+function icon(type){ if(type.startsWith('image'))return'🖼️'; if(type.startsWith('video'))return'🎬'; if(type.startsWith('audio'))return'🎵'; if(type.includes('pdf'))return'📄'; return'📦'; }
+
+function setStatus(txt, state){
+  $('#statusTxt').textContent = txt;
+  $('#dot').className = 'dot' + (state==='on'?' on':state==='err'?' err':'');
+  const connected = state==='on';
+  $('#drop').classList.toggle('off', !connected);
+  $('#disconnectBtn').classList.toggle('hide', !connected);
+  $('#pairCard').classList.toggle('hide', connected);
+}
+
+/* ---------- Peer starten ---------- */
+function startPeer(){
+  myCode = newCode();
+  peer = new Peer(PREFIX + myCode, { debug: 1 });
+
+  peer.on('open', () => {
+    $('#myCode').textContent = myCode;
+    const link = location.origin + location.pathname + '?c=' + myCode;
+    $('#qr').innerHTML = '';
+    if (window.QRCode && location.protocol.startsWith('http')) {
+      new QRCode($('#qr'), { text: link, width: 240, height: 240, correctLevel: QRCode.CorrectLevel.M });
+    } else $('#qr').classList.add('hide');
+    setStatus('Bereit – warte auf Verbindung', '');
+
+    // Über QR-Link geöffnet? Dann direkt verbinden
+    const target = new URLSearchParams(location.search).get('c');
+    if (target && target.toUpperCase() !== myCode) {
+      history.replaceState(null, '', location.pathname);
+      connectTo(target);
+    }
+  });
+
+  peer.on('connection', c => setupConn(c));
+
+  peer.on('disconnected', () => { if (!peer.destroyed) peer.reconnect(); });
+
+  peer.on('error', e => {
+    console.warn(e);
+    if (e.type === 'unavailable-id') { peer.destroy(); startPeer(); return; }
+    if (e.type === 'peer-unavailable') { setStatus('Code nicht gefunden – ist die Seite auf dem anderen Gerät offen?', 'err'); return; }
+    if (e.type === 'network' || e.type === 'server-error') { setStatus('Keine Verbindung zum Vermittlungsserver – Internet prüfen', 'err'); return; }
+    setStatus('Fehler: ' + e.type, 'err');
+  });
+}
+
+function connectTo(code){
+  code = code.trim().toUpperCase();
+  if (code.length !== 6) { setStatus('Code muss 6 Zeichen haben', 'err'); return; }
+  setStatus('Verbinde mit ' + code + ' …', '');
+  const c = peer.connect(PREFIX + code, { reliable: true, serialization: 'raw' });
+  setupConn(c);
+}
+
+/* ---------- Verbindung ---------- */
+function setupConn(c){
+  if (conn && conn !== c) { try { conn.close(); } catch(e){} }
+  conn = c;
+
+  c.on('open', () => {
+    if (c.dataChannel) c.dataChannel.binaryType = 'arraybuffer';
+    c.send(JSON.stringify({ t: 'hello', name: deviceName() }));
+    setStatus('Verbunden', 'on');
+  });
+
+  c.on('data', d => { msgChain = msgChain.then(() => handleData(d)).catch(console.error); });
+
+  c.on('close', () => {
+    if (conn !== c) return;
+    conn = null; sending = false; sendQueue = [];
+    if (incoming) { incoming.ui.info.textContent = 'Abgebrochen'; incoming = null; }
+    setStatus('Verbindung getrennt', '');
+  });
+
+  c.on('error', e => { console.warn(e); setStatus('Verbindungsfehler', 'err'); });
+}
+
+/* ---------- Empfangen ---------- */
+async function handleData(d){
+  if (d instanceof Blob) d = await d.arrayBuffer();
+
+  if (typeof d === 'string') {
+    const m = JSON.parse(d);
+    if (m.t === 'hello') setStatus('Verbunden mit ' + m.name, 'on');
+    else if (m.t === 'meta') {
+      incoming = { ...m, parts: [], got: 0, ui: addItem(m.name, m.size, m.type, 'in') };
+    }
+    else if (m.t === 'end' && incoming) {
+      const blob = new Blob(incoming.parts, { type: incoming.type || 'application/octet-stream' });
+      finishIncoming(incoming, blob);
+      incoming = null;
+    }
+    return;
+  }
+
+  // Binär-Chunk
+  if (!incoming) return;
+  incoming.parts.push(d);
+  incoming.got += d.byteLength;
+  updateProgress(incoming.ui, incoming.got, incoming.size);
+}
+
+function finishIncoming(inc, blob){
+  const ui = inc.ui;
+  const url = URL.createObjectURL(blob);
+  ui.bar.parentElement.classList.add('hide');
+  ui.info.textContent = fmt(blob.size) + ' · empfangen ✓';
+  if (inc.type.startsWith('image')) setThumbImg(ui, url);
+  if (inc.type.startsWith('video')) setThumbVid(ui, url);
+
+  const btn = document.createElement('button');
+  btn.textContent = isIOS ? 'Sichern' : 'Speichern';
+  btn.onclick = async () => {
+    const file = new File([blob], inc.name, { type: blob.type });
+    // iPhone: Teilen-Menü → "Bild sichern" / "Video sichern" / "In Dateien sichern"
+    if (isIOS && navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file] }); return; } catch(e){ if (e.name === 'AbortError') return; }
+    }
+    const a = document.createElement('a');
+    a.href = url; a.download = inc.name;
+    document.body.appendChild(a); a.click(); a.remove();
+  };
+  ui.el.appendChild(btn);
+
+  // Am PC direkt automatisch speichern
+  if (!isIOS) btn.click();
+}
+
+/* ---------- Senden ---------- */
+function queueFiles(files){
+  if (!conn || !conn.open) return;
+  for (const f of files) sendQueue.push({ file: f, ui: addItem(f.name, f.size, f.type, 'out') });
+  if (!sending) processQueue();
+}
+
+async function processQueue(){
+  sending = true;
+  while (sendQueue.length && conn && conn.open) {
+    const job = sendQueue.shift();
+    try { await sendFile(job.file, job.ui); }
+    catch(e){ console.error(e); job.ui.info.textContent = 'Fehler beim Senden'; }
+  }
+  sending = false;
+}
+
+async function sendFile(f, ui){
+  const c = conn;
+  const max = c.peerConnection?.sctp?.maxMessageSize || 16384;
+  const CHUNK = Math.min(64 * 1024, max);
+  const HIGH = 4 * 1024 * 1024;
+
+  if (f.type.startsWith('image')) setThumbImg(ui, URL.createObjectURL(f));
+
+  c.send(JSON.stringify({ t: 'meta', name: f.name, size: f.size, type: f.type || '' }));
+  let off = 0;
+  while (off < f.size) {
+    if (!c.open) throw new Error('Verbindung weg');
+    // Backpressure: nicht die ganze Datei in den Puffer schaufeln
+    while ((c.dataChannel && c.dataChannel.bufferedAmount > HIGH) || (c.bufferSize || 0) > 0) await sleep(8);
+    const buf = await f.slice(off, off + CHUNK).arrayBuffer();
+    c.send(buf);
+    off += buf.byteLength;
+    updateProgress(ui, off, f.size);
+  }
+  c.send(JSON.stringify({ t: 'end' }));
+  ui.bar.parentElement.classList.add('hide');
+  ui.info.textContent = fmt(f.size) + ' · gesendet ✓';
+}
+
+/* ---------- UI-Liste ---------- */
+function addItem(name, size, type, dir){
+  $('#empty')?.remove();
+  const el = document.createElement('div'); el.className = 'item';
+  el.innerHTML = `<div class="thumb">${icon(type || '')}</div>
+    <div class="meta"><div class="name"></div><div class="info"></div><div class="bar"><i></i></div></div>`;
+  el.querySelector('.name').textContent = (dir === 'in' ? '⬇ ' : '⬆ ') + name;
+  el.querySelector('.info').textContent = fmt(size) + (dir === 'in' ? ' · empfange …' : ' · warte …');
+  $('#list').prepend(el);
+  return { el, info: el.querySelector('.info'), bar: el.querySelector('.bar i'), thumb: el.querySelector('.thumb'), size, dir, t0: performance.now() };
+}
+function updateProgress(ui, done, total){
+  const p = total ? done / total : 1;
+  ui.bar.style.width = (p * 100).toFixed(1) + '%';
+  const secs = (performance.now() - ui.t0) / 1000;
+  const speed = secs > 0.3 ? ' · ' + fmt(done / secs) + '/s' : '';
+  ui.info.textContent = `${fmt(done)} / ${fmt(total)}${speed}`;
+}
+function setThumbImg(ui, url){ const i = document.createElement('img'); i.className = 'thumb'; i.src = url; ui.thumb.replaceWith(i); ui.thumb = i; }
+function setThumbVid(ui, url){ const v = document.createElement('video'); v.className = 'thumb'; v.src = url; v.muted = true; v.playsInline = true; ui.thumb.replaceWith(v); ui.thumb = v; }
+
+/* ---------- Events ---------- */
+$('#connectBtn').onclick = () => connectTo($('#codeIn').value);
+$('#codeIn').addEventListener('keydown', e => { if (e.key === 'Enter') connectTo(e.target.value); });
+$('#disconnectBtn').onclick = () => { if (conn) conn.close(); };
+
+const drop = $('#drop'), fileIn = $('#fileIn');
+drop.onclick = () => fileIn.click();
+fileIn.onchange = () => { queueFiles([...fileIn.files]); fileIn.value = ''; };
+['dragenter','dragover'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('hover'); }));
+['dragleave','drop'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('hover'); }));
+document.addEventListener('drop', e => { if (e.dataTransfer?.files?.length) queueFiles([...e.dataTransfer.files]); });
+
+window.addEventListener('beforeunload', () => { if (peer) peer.destroy(); });
+
+startPeer();
+</script>
+</body>
+</html>
